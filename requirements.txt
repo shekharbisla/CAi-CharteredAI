@@ -1,0 +1,8 @@
+gspread
+oauth2client
+PyGithub
+pandas
+transformers
+datasets
+huggingface_hub
+torch
