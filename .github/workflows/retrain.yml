@@ -1,0 +1,35 @@
+name: Retrain CAi
+
+on:
+  workflow_dispatch:   # manually run kar sakte ho
+  push:
+    paths:
+      - "data/**"      # agar data folder me naya data aaye to retrain hoga
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread oauth2client transformers datasets
+
+      - name: Configure Google Sheets credentials
+        run: |
+          echo "${{ secrets.GOOGLE_CREDS_JSON }}" > creds.json
+
+      - name: Run retrain script
+        run: |
+          python retrain.py
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
