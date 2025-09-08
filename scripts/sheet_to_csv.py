@@ -1,20 +1,19 @@
 # scripts/sheet_to_csv.py
-# Pull Google Sheet rows and commit to repo as data/labels.csv
 import os
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from github import Github
 
-# env: GOOGLE_CREDS_JSON (path to JSON file created by workflow), GITHUB_REPO (owner/repo)
-GOOGLE_CREDS = os.environ.get("GOOGLE_CREDS_JSON", "google-creds.json")
+# Use fixed creds file (workflow creates this)
+GOOGLE_CREDS = "google-creds.json"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")  # provided by Actions automatically
 GITHUB_REPO = os.environ.get("GITHUB_REPO", os.getenv("GITHUB_REPOSITORY"))
 
 if not GITHUB_REPO:
     raise SystemExit("GITHUB_REPO (or GITHUB_REPOSITORY) must be set")
 
-scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
 creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDS, scope)
 client = gspread.authorize(creds)
 
@@ -35,6 +34,6 @@ try:
     contents = repo.get_contents(path)
     repo.update_file(path, "Update labels.csv from sheet", csv_content, contents.sha)
     print("Updated data/labels.csv")
-except Exception as e:
+except Exception:
     repo.create_file(path, "Create labels.csv from sheet", csv_content)
     print("Created data/labels.csv")
