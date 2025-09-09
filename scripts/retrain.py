@@ -1,61 +1,51 @@
-name: Retrain CAi
+# scripts/retrain.py
+# Minimal starter: reads data/labels.csv, creates tiny text2text fine-tune using t5-small
+import os
+import pandas as pd
+from datasets import Dataset
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, Trainer, TrainingArguments
 
-on:
-  workflow_dispatch:
-  push:
-    paths:
-      - "data/**"
+DATA_PATH = os.environ.get("DATA_PATH", "data/labels.csv")
+if not os.path.exists(DATA_PATH):
+    print("No data file at", DATA_PATH)
+    exit(0)
 
-jobs:
-  retrain:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+df = pd.read_csv(DATA_PATH)
+if df.empty:
+    print("No training rows found.")
+    exit(0)
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+examples = []
+# Build simple input-target pairs: invoice text placeholder -> field:value
+# For MVP, original_value will be used; you should aggregate per-invoice later.
+for _, r in df.iterrows():
+    inp = f"field:{r.get('field_name','')} | text: {r.get('original_value','')}"
+    tgt = f"{r.get('field_name','')}:{r.get('corrected_value','')}"
+    examples.append({"input": inp, "target": tgt})
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # first install requirements if you have them
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # install common ML / HF libs (adds safety if requirements.txt missing)
-          python -m pip install --no-cache-dir transformers datasets huggingface_hub gspread oauth2client sentencepiece
+ds = Dataset.from_pandas(pd.DataFrame(examples))
+model_name = "t5-small"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-      - name: Write Google credentials to file
-        run: |
-          echo '${{ secrets.GOOGLE_CREDS_JSON }}' > google-creds.json
-          # show limited info (non-sensitive) to confirm file created
-          echo "Created google-creds.json and size:"
-          ls -l google-creds.json
+def preprocess(ex):
+    enc = tokenizer(ex["input"], truncation=True, padding="max_length", max_length=256)
+    targ = tokenizer(ex["target"], truncation=True, padding="max_length", max_length=64)
+    enc["labels"] = targ["input_ids"]
+    return enc
 
-      - name: Pull sheet -> update data/labels.csv
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p data
-          python scripts/sheet_to_csv.py --creds google-creds.json --out data/labels.csv
+ds = ds.map(preprocess, remove_columns=ds.column_names)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
-      - name: Validate data file
-        run: |
-          echo "Data file preview (first 10 lines):"
-          if [ -f data/labels.csv ]; then head -n 10 data/labels.csv || true; else echo "data/labels.csv not found"; exit 1; fi
+training_args = TrainingArguments(
+    output_dir="out_model",
+    num_train_epochs=1,
+    per_device_train_batch_size=4,
+    save_total_limit=1,
+    logging_steps=10,
+    fp16=False
+)
 
-      - name: Run retrain
-        env:
-          DATA_PATH: data/labels.csv
-        run: |
-          python scripts/retrain.py
-
-      - name: Push model to Hugging Face
-        if: success()
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          python -m pip install --no-cache-dir huggingface_hub
-          python scripts/push_to_hf.py --model-dir out_model --repo "shekharbislaji/CAi-Tax-Made-Easy"
+trainer = Trainer(model=model, args=training_args, train_dataset=ds)
+trainer.train()
+trainer.save_model("out_model")
+print("Saved model to out_model")
